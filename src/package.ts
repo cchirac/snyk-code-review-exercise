@@ -1,7 +1,9 @@
 import { RequestHandler } from 'express';
 import { maxSatisfying } from 'semver';
-import got from 'got';
-import { NPMPackage } from './types';
+import { Injector } from './dependency-injection/inversify.config';
+import { HTTP_SERVICE } from './dependency-injection/tokens';
+import { IHttpService } from './dependency-injection/types';
+import { PackageTreeNode } from './types';
 
 type Package = { version: string; dependencies: Record<string, Package> };
 
@@ -10,41 +12,37 @@ type Package = { version: string; dependencies: Record<string, Package> };
  */
 export const getPackage: RequestHandler = async function (req, res, next) {
   const { name, version } = req.params;
-  const dependencyTree = {};
+
   try {
-    const npmPackage: NPMPackage = await got(
-      `https://registry.npmjs.org/${name}`,
-    ).json();
-
-    const dependencies: Record<string, string> =
-      npmPackage.versions[version].dependencies ?? {};
-    for (const [name, range] of Object.entries(dependencies)) {
-      const subDep = await getDependencies(name, range);
-      dependencyTree[name] = subDep;
-    }
-
     return res
       .status(200)
-      .json({ name, version, dependencies: dependencyTree });
+      .json({ name, ...await getDependencies(name, version) });
   } catch (error) {
     return next(error);
   }
 };
 
-async function getDependencies(name: string, range: string): Promise<Package> {
-  const npmPackage: NPMPackage = await got(
-    `https://registry.npmjs.org/${name}`,
-  ).json();
+async function getDependencies(
+  packageName: string,
+  versionRange: string,
+  parentNode: PackageTreeNode | null = null,
+): Promise<Package> {
+  const httpService = Injector.get<IHttpService>(HTTP_SERVICE);
+  const npmPackage = await httpService.fetchPackage(packageName);
 
-  const v = maxSatisfying(Object.keys(npmPackage.versions), range);
+  const maxSatisfyingVersion = maxSatisfying(Object.keys(npmPackage.versions), versionRange);
   const dependencies: Record<string, Package> = {};
 
-  if (v) {
-    const newDeps = npmPackage.versions[v].dependencies;
-    for (const [name, range] of Object.entries(newDeps ?? {})) {
-      dependencies[name] = await getDependencies(name, range);
+  if (maxSatisfyingVersion) {
+    const currTreeNode = new PackageTreeNode(packageName, maxSatisfyingVersion, parentNode);
+
+    if (!currTreeNode.equalsAnyAncestor()) {
+      const newDeps = npmPackage.versions[maxSatisfyingVersion].dependencies;
+      for (const [name, range] of Object.entries(newDeps ?? {})) {
+        dependencies[name] = await getDependencies(name, range, currTreeNode);
+      }
     }
   }
 
-  return { version: v ?? range, dependencies };
+  return { version: maxSatisfyingVersion ?? versionRange, dependencies };
 }

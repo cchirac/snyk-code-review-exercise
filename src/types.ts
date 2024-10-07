@@ -39,3 +39,33 @@ export interface NPMPackage {
     };
   };
 }
+
+export class PackageTreeNode {
+  private _packageName: string;
+  private _packageVersion: string;
+  private _parentNode: PackageTreeNode | null;
+
+  constructor(packageName: string, packageVersion: string, parentNode: PackageTreeNode | null = null) {
+    this._packageName = packageName;
+    this._packageVersion = packageVersion;
+    this._parentNode = parentNode;
+  }
+
+  public equals(other: PackageTreeNode): boolean {
+    return this._packageName === other._packageName && this._packageVersion === other._packageVersion;
+  }
+
+  public equalsAnyAncestor(): boolean {
+    let currAncestor = this._parentNode;
+
+    while (currAncestor) {
+      if (this.equals(currAncestor)) {
+        return true;
+      }
+
+      currAncestor = currAncestor._parentNode;
+    }
+
+    return false;
+  }
+}
